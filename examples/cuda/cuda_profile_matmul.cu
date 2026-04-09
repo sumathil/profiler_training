@@ -1,8 +1,7 @@
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
-#include <nvToolsExt.h>
-
+#include <nvtx3/nvtx3.hpp>
 #include "utils.h"
 
 #include <cmath>
@@ -47,19 +46,19 @@ Options parse_args(int argc, char **argv) {
   Options opt;
   for (int i = 1; i < argc; ++i) {
     const char *arg = argv[i];
-    if (std::strcmp(arg, "--n") == 0 && i + 1 < argc) {
+    if (strcmp(arg, "--n") == 0 && i + 1 < argc) {
       opt.n = std::atoi(argv[++i]);
-    } else if (std::strcmp(arg, "--iterations") == 0 && i + 1 < argc) {
+    } else if (strcmp(arg, "--iterations") == 0 && i + 1 < argc) {
       opt.iterations = std::atoi(argv[++i]);
-    } else if (std::strcmp(arg, "--warmup") == 0 && i + 1 < argc) {
+    } else if (strcmp(arg, "--warmup") == 0 && i + 1 < argc) {
       opt.warmup = std::atoi(argv[++i]);
-    } else if (std::strcmp(arg, "--use-cublas") == 0) {
+    } else if (strcmp(arg, "--use-cublas") == 0) {
       opt.use_cublas = true;
-    } else if (std::strcmp(arg, "--use-streams") == 0) {
+    } else if (strcmp(arg, "--use-streams") == 0) {
       opt.use_streams = true;
-    } else if (std::strcmp(arg, "--streams") == 0 && i + 1 < argc) {
+    } else if (strcmp(arg, "--streams") == 0 && i + 1 < argc) {
       opt.streams = std::atoi(argv[++i]);
-    } else if (std::strcmp(arg, "--help") == 0) {
+    } else if (strcmp(arg, "--help") == 0) {
       std::cout << "Usage: ./cuda_profile_matmul [--n N] [--iterations I] "
                    "[--warmup W] [--use-cublas] [--use-streams] [--streams S]\n";
       std::exit(EXIT_SUCCESS);
