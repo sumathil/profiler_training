@@ -1,12 +1,40 @@
 #include <cuda_runtime.h>
+#include <nvtx3/nvToolsExt.h>
 
 #include "utils.h"
 
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
+
+namespace {
+constexpr uint32_t kColorMemcpyH2D = 0xFF1E88E5;      // Blue
+constexpr uint32_t kColorMemcpyD2H = 0xFF43A047;      // Green
+constexpr uint32_t kColorKernelNaive = 0xFFE53935;    // Red
+constexpr uint32_t kColorKernelWarmup = 0xFF8E24AA;   // Purple
+constexpr uint32_t kColorKernelTimed = 0xFFFB8C00;    // Orange
+
+class NvtxScopedRange {
+ public:
+  NvtxScopedRange(const char *name, uint32_t color) {
+    nvtxEventAttributes_t attr{};
+    attr.version = NVTX_VERSION;
+    attr.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+    attr.colorType = NVTX_COLOR_ARGB;
+    attr.color = color;
+    attr.messageType = NVTX_MESSAGE_TYPE_ASCII;
+    attr.message.ascii = name;
+    nvtxRangePushEx(&attr);
+  }
+
+  ~NvtxScopedRange() {
+    nvtxRangePop();
+  }
+};
+}  // namespace
 
 __global__ void matmulNaive(const float *a, const float *b, float *c, int n) {
   int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -26,8 +54,12 @@ double benchmarkKernel(const float *d_a, const float *d_b, float *d_c, int n,
   dim3 block(tileSize, tileSize);
   dim3 grid((n + tileSize - 1) / tileSize, (n + tileSize - 1) / tileSize);
 
-  for (int i = 0; i < 3; ++i) {
-    matmulNaive<<<grid, block>>>(d_a, d_b, d_c, n);
+  {
+    NvtxScopedRange warmupRange("kernel_naive_warmup", kColorKernelWarmup);
+    for (int i = 0; i < 3; ++i) {
+      NvtxScopedRange launchRange("matmul_naive_launch", kColorKernelNaive);
+      matmulNaive<<<grid, block>>>(d_a, d_b, d_c, n);
+    }
   }
   CHECK_CUDA(cudaGetLastError());
   CHECK_CUDA(cudaDeviceSynchronize());
@@ -37,8 +69,12 @@ double benchmarkKernel(const float *d_a, const float *d_b, float *d_c, int n,
   CHECK_CUDA(cudaEventCreate(&stop));
 
   CHECK_CUDA(cudaEventRecord(start));
-  for (int i = 0; i < iterations; ++i) {
-    matmulNaive<<<grid, block>>>(d_a, d_b, d_c, n);
+  {
+    NvtxScopedRange timedRange("kernel_naive_timed", kColorKernelTimed);
+    for (int i = 0; i < iterations; ++i) {
+      NvtxScopedRange launchRange("matmul_naive_launch", kColorKernelNaive);
+      matmulNaive<<<grid, block>>>(d_a, d_b, d_c, n);
+    }
   }
   CHECK_CUDA(cudaEventRecord(stop));
   CHECK_CUDA(cudaGetLastError());
@@ -69,6 +105,29 @@ int main(int argc, char **argv) {
 
   size_t elements = static_cast<size_t>(n) * static_cast<size_t>(n);
   size_t bytes = elements * sizeof(float);
+  size_t totalAllocBytes = 3 * bytes;
+
+  int deviceCount = 0;
+  cudaError_t countErr = cudaGetDeviceCount(&deviceCount);
+  if (countErr != cudaSuccess) {
+    std::cerr << "CUDA initialization failed: " << cudaGetErrorString(countErr)
+              << " (" << static_cast<int>(countErr) << ")\n"
+              << "Try running `nvidia-smi` to confirm the driver is healthy."
+              << std::endl;
+    return EXIT_FAILURE;
+  }
+  if (deviceCount <= 0) {
+    std::cerr << "No CUDA devices detected." << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  int device = 0;
+  CHECK_CUDA(cudaSetDevice(device));
+  cudaDeviceProp prop{};
+  CHECK_CUDA(cudaGetDeviceProperties(&prop, device));
+  std::cout << "Device: " << prop.name << "\n";
+  std::cout << "Requested device allocation: " << (totalAllocBytes / (1024.0 * 1024.0))
+            << " MiB (" << totalAllocBytes << " bytes)\n";
 
   std::vector<float> h_a(elements, 1.0f);
   std::vector<float> h_b(elements, 2.0f);
@@ -81,15 +140,15 @@ int main(int argc, char **argv) {
   CHECK_CUDA(cudaMalloc(&d_b, bytes));
   CHECK_CUDA(cudaMalloc(&d_c, bytes));
 
-  CHECK_CUDA(cudaMemcpy(d_a, h_a.data(), bytes, cudaMemcpyHostToDevice));
-  CHECK_CUDA(cudaMemcpy(d_b, h_b.data(), bytes, cudaMemcpyHostToDevice));
+  {
+    NvtxScopedRange range("memcpy_h2d_a", kColorMemcpyH2D);
+    CHECK_CUDA(cudaMemcpy(d_a, h_a.data(), bytes, cudaMemcpyHostToDevice));
+  }
+  {
+    NvtxScopedRange range("memcpy_h2d_b", kColorMemcpyH2D);
+    CHECK_CUDA(cudaMemcpy(d_b, h_b.data(), bytes, cudaMemcpyHostToDevice));
+  }
 
-  int device = 0;
-  cudaDeviceProp prop{};
-  CHECK_CUDA(cudaGetDevice(&device));
-  CHECK_CUDA(cudaGetDeviceProperties(&prop, device));
-
-  std::cout << "Device: " << prop.name << "\n";
   std::cout << "Matrix size: " << n << "x" << n
             << ", iterations: " << iterations << "\n\n";
   std::cout << "TileSize,AvgKernelMs,EstimatedGFLOPS\n";
@@ -107,7 +166,10 @@ int main(int argc, char **argv) {
     std::cout << tileSize << "," << avgMs << "," << gflops << "\n";
   }
 
-  CHECK_CUDA(cudaMemcpy(h_c.data(), d_c, bytes, cudaMemcpyDeviceToHost));
+  {
+    NvtxScopedRange range("memcpy_d2h_c", kColorMemcpyD2H);
+    CHECK_CUDA(cudaMemcpy(h_c.data(), d_c, bytes, cudaMemcpyDeviceToHost));
+  }
   float expected = 2.0f * static_cast<float>(n);
   for (int i = 0; i < 5 && i < static_cast<int>(elements); ++i) {
     if (std::fabs(h_c[i] - expected) > 1e-3f) {

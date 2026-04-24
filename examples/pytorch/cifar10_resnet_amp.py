@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.1)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--pin-memory", action="store_true")
-    parser.add_argument("--max-steps", type=int, default=200, help="0 = full epoch")
+    parser.add_argument("--max-steps", type=int, default=2000, help="0 = full epoch")
     parser.add_argument("--warmup-steps", type=int, default=10)
     parser.add_argument("--no-download", action="store_true")
     parser.add_argument("--device", default="auto", help="auto, cpu, or cuda")
@@ -132,14 +132,14 @@ def main():
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
 
     use_amp = (device.type == "cuda") and (not args.disable_amp)
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler(enabled=use_amp)
 
     model.train()
     step = 0
     start_time = time.time()
 
     for epoch in range(args.epochs):
-        for images, labels in train_loader:
+        for i, (images, labels) in enumerate(train_loader):
             if args.channels_last and device.type == "cuda":
                 images = images.to(device, non_blocking=True, memory_format=torch.channels_last)
             else:
@@ -147,13 +147,14 @@ def main():
             labels = labels.to(device, non_blocking=True)
 
             optimizer.zero_grad(set_to_none=True)
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast('cuda', enabled=use_amp):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-
+            if (i + 1) % 100 == 0:
+                print(f'Epoch [{epoch+1}/{args.epochs}], Step [{i+1}/{len(train_loader)}], Loss: {loss.item():.4f}')            
             step += 1
             if profiler is not None:
                 profiler.step()

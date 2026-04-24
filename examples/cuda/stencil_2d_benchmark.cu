@@ -119,7 +119,7 @@ int main(int argc, char **argv) {
   std::cout << "Grid: " << ny << "x" << nx << ", iterations: " << iterations << "\n\n";
   std::cout << "BlockDim,AvgKernelMs,EstimatedGBps\n";
 
-  const int blockDims[] = {8, 16, 32};
+  const int blockDims[] = {16, 32};
   for (int blockDimXY : blockDims) {
     if (blockDimXY * blockDimXY > prop.maxThreadsPerBlock) {
       continue;
@@ -135,13 +135,14 @@ int main(int argc, char **argv) {
     double gbps = (bytesMoved / 1e9) / seconds;
     std::cout << blockDimXY << "x" << blockDimXY << "," << avgMs << "," << gbps << "\n";
   }
-
+  CHECK_CUDA(cudaMemcpy(d_in, h_in.data(), bytes, cudaMemcpyHostToDevice));
   dim3 block(16, 16);
   dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
   stencil5PointKernel<<<grid, block>>>(d_in, d_out, nx, ny);
   CHECK_CUDA(cudaGetLastError());
   CHECK_CUDA(cudaMemcpy(h_out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
 
+  
   for (int y = 0; y < ny; ++y) {
     for (int x = 0; x < nx; ++x) {
       int idx = y * nx + x;

@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=0.01)
-    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--pin-memory", action="store_true")
     parser.add_argument("--max-steps", type=int, default=200, help="0 = full epoch")
     parser.add_argument("--warmup-steps", type=int, default=10)
