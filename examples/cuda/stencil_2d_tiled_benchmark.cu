@@ -175,6 +175,8 @@ int main(int argc, char **argv) {
     double gbps = (bytesMoved / 1e9) / seconds;
     std::cout << tileDim << "x" << tileDim << "," << avgMs << "," << gbps << "\n";
   }
+
+  // Reset input for validation since benchmarkKernel mutates device buffers.
   CHECK_CUDA(cudaMemcpy(d_in, h_in.data(), bytes, cudaMemcpyHostToDevice));
   dim3 block(16, 16);
   dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);

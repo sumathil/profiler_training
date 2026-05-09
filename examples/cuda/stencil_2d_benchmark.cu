@@ -8,6 +8,7 @@
 #include <vector>
 
 __global__ void stencil5PointKernel(const float *in, float *out, int nx, int ny) {
+  // Map one thread to one grid cell.
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -16,11 +17,13 @@ __global__ void stencil5PointKernel(const float *in, float *out, int nx, int ny)
   }
 
   int idx = y * nx + x;
+  // Keep boundary unchanged (Dirichlet-style boundary handling).
   if (x == 0 || y == 0 || x == nx - 1 || y == ny - 1) {
     out[idx] = in[idx];
     return;
   }
 
+  // 5-point stencil: center + four direct neighbors.
   float center = in[idx];
   float north = in[(y - 1) * nx + x];
   float south = in[(y + 1) * nx + x];
@@ -36,8 +39,10 @@ double benchmarkKernel(float *d_in, float *d_out, int nx, int ny, int blockDimXY
 
   float *inPtr = d_in;
   float *outPtr = d_out;
+  // Warmup launches to avoid first-iteration timing artifacts.
   for (int i = 0; i < 5; ++i) {
     stencil5PointKernel<<<grid, block>>>(inPtr, outPtr, nx, ny);
+    // Ping-pong buffers so the next iteration consumes prior output.
     float *tmpIn = inPtr;
     inPtr = outPtr;
     outPtr = tmpIn;
@@ -54,6 +59,7 @@ double benchmarkKernel(float *d_in, float *d_out, int nx, int ny, int blockDimXY
   CHECK_CUDA(cudaEventRecord(start));
   for (int i = 0; i < iterations; ++i) {
     stencil5PointKernel<<<grid, block>>>(inPtr, outPtr, nx, ny);
+    // Same ping-pong pattern during measured iterations.
     float *tmpIn = inPtr;
     inPtr = outPtr;
     outPtr = tmpIn;
@@ -97,6 +103,7 @@ int main(int argc, char **argv) {
   std::vector<float> h_out(elements, 0.0f);
   std::vector<float> h_ref(elements, 0.0f);
 
+  // Smooth-but-nontrivial initial field for correctness/perf testing.
   for (int y = 0; y < ny; ++y) {
     for (int x = 0; x < nx; ++x) {
       h_in[y * nx + x] =
@@ -119,7 +126,7 @@ int main(int argc, char **argv) {
   std::cout << "Grid: " << ny << "x" << nx << ", iterations: " << iterations << "\n\n";
   std::cout << "BlockDim,AvgKernelMs,EstimatedGBps\n";
 
-  const int blockDims[] = {16, 32};
+  const int blockDims[] = {8, 16, 32};
   for (int blockDimXY : blockDims) {
     if (blockDimXY * blockDimXY > prop.maxThreadsPerBlock) {
       continue;
@@ -131,10 +138,13 @@ int main(int argc, char **argv) {
     CHECK_CUDA(cudaMemcpy(d_in, h_in.data(), bytes, cudaMemcpyHostToDevice));
     double avgMs = benchmarkKernel(d_in, d_out, nx, ny, blockDimXY, iterations);
     double seconds = avgMs / 1e3;
+    // Approximate traffic per updated cell: 5 reads + 1 write (float each).
     double bytesMoved = static_cast<double>(elements) * 6.0 * sizeof(float);
     double gbps = (bytesMoved / 1e9) / seconds;
     std::cout << blockDimXY << "x" << blockDimXY << "," << avgMs << "," << gbps << "\n";
   }
+
+  // Reset input for validation since benchmarkKernel mutates device buffers.
   CHECK_CUDA(cudaMemcpy(d_in, h_in.data(), bytes, cudaMemcpyHostToDevice));
   dim3 block(16, 16);
   dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
@@ -142,7 +152,6 @@ int main(int argc, char **argv) {
   CHECK_CUDA(cudaGetLastError());
   CHECK_CUDA(cudaMemcpy(h_out.data(), d_out, bytes, cudaMemcpyDeviceToHost));
 
-  
   for (int y = 0; y < ny; ++y) {
     for (int x = 0; x < nx; ++x) {
       int idx = y * nx + x;
