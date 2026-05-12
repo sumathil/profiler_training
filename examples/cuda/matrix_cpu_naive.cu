@@ -1,19 +1,23 @@
 #include <cuda_runtime.h>
-#include <nvtx3/nvToolsExt.h>
+#include <nvToolsExt.h>
 
 #include "utils.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 namespace {
 constexpr uint32_t kColorMemcpyH2D = 0xFF1E88E5;      // Blue
 constexpr uint32_t kColorMemcpyD2H = 0xFF43A047;      // Green
 constexpr uint32_t kColorKernelNaive = 0xFFE53935;    // Red
+constexpr uint32_t kColorKernelTiled = 0xFFFDD835;    // Yellow
 constexpr uint32_t kColorKernelWarmup = 0xFF8E24AA;   // Purple
 constexpr uint32_t kColorKernelTimed = 0xFFFB8C00;    // Orange
 
@@ -49,7 +53,22 @@ __global__ void matmulNaive(const float *a, const float *b, float *c, int n) {
   }
 }
 
-double benchmarkKernel(const float *d_a, const float *d_b, float *d_c, int n,
+
+void matmulCpu(const std::vector<float> &a, const std::vector<float> &b,
+               std::vector<float> &c, int n) {
+  for (int row = 0; row < n; ++row) {
+    int rowBase = row * n;
+    for (int col = 0; col < n; ++col) {
+      float sum = 0.0f;
+      for (int k = 0; k < n; ++k) {
+        sum += a[rowBase + k] * b[k * n + col];
+      }
+      c[rowBase + col] = sum;
+    }
+  }
+}
+
+double gpuMM(const float *d_a, const float *d_b, float *d_c, int n,
                        int tileSize, int iterations) {
   dim3 block(tileSize, tileSize);
   dim3 grid((n + tileSize - 1) / tileSize, (n + tileSize - 1) / tileSize);
@@ -87,6 +106,39 @@ double benchmarkKernel(const float *d_a, const float *d_b, float *d_c, int n,
   return static_cast<double>(elapsedMs) / static_cast<double>(iterations);
 }
 
+
+double benchmarkCpu(const std::vector<float> &a, const std::vector<float> &b,
+                    std::vector<float> &c, int n, int iterations) {
+  matmulCpu(a, b, c, n);
+
+  auto start = std::chrono::high_resolution_clock::now();
+  for (int i = 0; i < 1; ++i) {
+    matmulCpu(a, b, c, n);
+  }
+  auto stop = std::chrono::high_resolution_clock::now();
+
+  double elapsedMs = std::chrono::duration<double, std::milli>(stop - start).count();
+  return elapsedMs / static_cast<double>(iterations);
+}
+
+double gflopsFromMs(int n, double avgMs) {
+  double seconds = avgMs / 1e3;
+  return (2.0 * static_cast<double>(n) * n * n) / (seconds * 1e9);
+}
+
+
+bool validateOutput(const std::vector<float> &out, float expected) {
+  for (size_t i = 0; i < out.size(); ++i) {
+    if (std::fabs(out[i] - expected) > 1e-2f) {
+      std::cerr << "Validation failed at index " << i
+                << ": got " << out[i]
+                << ", expected " << expected << std::endl;
+      return false;
+    }
+  }
+  return true;
+}
+
 int main(int argc, char **argv) {
   int n = 1024;
   int iterations = 50;
@@ -105,33 +157,18 @@ int main(int argc, char **argv) {
 
   size_t elements = static_cast<size_t>(n) * static_cast<size_t>(n);
   size_t bytes = elements * sizeof(float);
-  size_t totalAllocBytes = 3 * bytes;
-
-  int deviceCount = 0;
-  cudaError_t countErr = cudaGetDeviceCount(&deviceCount);
-  if (countErr != cudaSuccess) {
-    std::cerr << "CUDA initialization failed: " << cudaGetErrorString(countErr)
-              << " (" << static_cast<int>(countErr) << ")\n"
-              << "Try running `nvidia-smi` to confirm the driver is healthy."
-              << std::endl;
-    return EXIT_FAILURE;
-  }
-  if (deviceCount <= 0) {
-    std::cerr << "No CUDA devices detected." << std::endl;
-    return EXIT_FAILURE;
-  }
-
-  int device = 0;
-  CHECK_CUDA(cudaSetDevice(device));
-  cudaDeviceProp prop{};
-  CHECK_CUDA(cudaGetDeviceProperties(&prop, device));
-  std::cout << "Device: " << prop.name << "\n";
-  std::cout << "Requested device allocation: " << (totalAllocBytes / (1024.0 * 1024.0))
-            << " MiB (" << totalAllocBytes << " bytes)\n";
 
   std::vector<float> h_a(elements, 1.0f);
   std::vector<float> h_b(elements, 2.0f);
-  std::vector<float> h_c(elements, 0.0f);
+  std::vector<float> h_c_cpu(elements, 0.0f);
+  std::vector<float> h_c_naive(elements, 0.0f);
+
+  double cpuMs = benchmarkCpu(h_a, h_b, h_c_cpu, n, iterations);
+  if (!validateOutput(h_c_cpu, 2.0f * static_cast<float>(n))) {
+    return EXIT_FAILURE;
+  }
+  double cpuGflops = gflopsFromMs(n, cpuMs);
+ 
 
   float *d_a = nullptr;
   float *d_b = nullptr;
@@ -149,36 +186,53 @@ int main(int argc, char **argv) {
     CHECK_CUDA(cudaMemcpy(d_b, h_b.data(), bytes, cudaMemcpyHostToDevice));
   }
 
+  int device = 0;
+  cudaDeviceProp prop{};
+  CHECK_CUDA(cudaGetDevice(&device));
+  CHECK_CUDA(cudaGetDeviceProperties(&prop, device));
+
+  std::cout << "Device: " << prop.name << "\n";
   std::cout << "Matrix size: " << n << "x" << n
             << ", iterations: " << iterations << "\n\n";
-  std::cout << "TileSize,AvgKernelMs,EstimatedGFLOPS\n";
 
-  const int tileSizes[] = {16, 32};
+  std::cout << "CPU Execution " << cpuMs << " ms\n\n";
+  std::cout << std::string(42, '-') << "\n";
+  std::cout << "\t\tGPU Execution\n";
+  std::cout << std::string(42, '-') << "\n";
+ std::cout << std::left 
+          << std::setw(12) << "TileSize"
+          << std::setw(18) << "Exec_time(ms)"
+          << std::setw(12) << "SpeedUp"
+          << "\n";
+std::cout << std::string(42, '-') << "\n";
+
+  const int tileSizes[] = {8, 16, 32};
   for (int tileSize : tileSizes) {
     if (tileSize * tileSize > prop.maxThreadsPerBlock) {
       continue;
     }
 
-    double avgMs = benchmarkKernel(d_a, d_b, d_c, n, tileSize, iterations);
-    double seconds = avgMs / 1e3;
+    double executiontime = gpuMM(d_a, d_b, d_c, n, tileSize, iterations);
+    double speedupNaiveVsCpu = cpuMs / executiontime;
+    double seconds = executiontime / 1e3;
     double gflops = (2.0 * static_cast<double>(n) * n * n) / (seconds * 1e9);
-
-    std::cout << tileSize << "," << avgMs << "," << gflops << "\n";
+    std::cout << std::left
+          << std::setw(12) << tileSize
+          << std::fixed << std::setprecision(3)
+          << std::setw(18) << executiontime
+          << std::setw(12) << speedupNaiveVsCpu
+          << "\n";
   }
 
   {
     NvtxScopedRange range("memcpy_d2h_c", kColorMemcpyD2H);
-    CHECK_CUDA(cudaMemcpy(h_c.data(), d_c, bytes, cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaMemcpy(h_c_naive.data(), d_c, bytes, cudaMemcpyDeviceToHost));
   }
-  float expected = 2.0f * static_cast<float>(n);
-  for (int i = 0; i < 5 && i < static_cast<int>(elements); ++i) {
-    if (std::fabs(h_c[i] - expected) > 1e-3f) {
-      std::cerr << "Validation failed at index " << i << std::endl;
-      CHECK_CUDA(cudaFree(d_a));
-      CHECK_CUDA(cudaFree(d_b));
-      CHECK_CUDA(cudaFree(d_c));
-      return EXIT_FAILURE;
-    }
+  if (!validateOutput(h_c_naive, 2.0f * static_cast<float>(n))) {
+    CHECK_CUDA(cudaFree(d_a));
+    CHECK_CUDA(cudaFree(d_b));
+    CHECK_CUDA(cudaFree(d_c));
+    return EXIT_FAILURE;
   }
 
   CHECK_CUDA(cudaFree(d_a));
