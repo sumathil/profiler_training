@@ -24,7 +24,11 @@ constexpr uint32_t kColorKernelTimed = 0xFFFB8C00;    // Orange
 constexpr uint32_t kColorCublas = 0xFF00BCD4;         // Cyan
 constexpr uint32_t kColorCublasWarmup = 0xFFAB47BC;   // Light Purple
 constexpr uint32_t kColorCublasTimed = 0xFFFF6F00;    // Deep Orange
+constexpr uint32_t kColorMarker = 0xFFFF00FF;         // Magenta
+constexpr uint32_t kColorRange = 0xFF00FFFF;          // Cyan
+constexpr uint32_t kColorCPU = 0xFFFFFFFF;            // White
 
+// NVTX Push/Pop RAII wrapper
 class NvtxScopedRange {
  public:
   NvtxScopedRange(const char *name, uint32_t color) {
@@ -42,6 +46,50 @@ class NvtxScopedRange {
     nvtxRangePop();
   }
 };
+
+// NVTX Marker helper
+void nvtxMarker(const char *name, uint32_t color) {
+  nvtxEventAttributes_t attr{};
+  attr.version = NVTX_VERSION;
+  attr.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+  attr.colorType = NVTX_COLOR_ARGB;
+  attr.color = color;
+  attr.messageType = NVTX_MESSAGE_TYPE_ASCII;
+  attr.message.ascii = name;
+  nvtxMarkEx(&attr);
+}
+
+// NVTX Range (start/end) helper class
+class NvtxRange {
+ public:
+  NvtxRange() : rangeId_(0) {}
+  
+  void start(const char *name, uint32_t color) {
+    nvtxEventAttributes_t attr{};
+    attr.version = NVTX_VERSION;
+    attr.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+    attr.colorType = NVTX_COLOR_ARGB;
+    attr.color = color;
+    attr.messageType = NVTX_MESSAGE_TYPE_ASCII;
+    attr.message.ascii = name;
+    rangeId_ = nvtxRangeStartEx(&attr);
+  }
+  
+  void end() {
+    if (rangeId_ != 0) {
+      nvtxRangeEnd(rangeId_);
+      rangeId_ = 0;
+    }
+  }
+  
+  ~NvtxRange() {
+    end();
+  }
+  
+ private:
+  nvtxRangeId_t rangeId_;
+};
+
 }  // namespace
 
 __global__ void matmulNaive(const float *a, const float *b, float *c, int n) {
@@ -67,7 +115,6 @@ __global__ void matmulTiled(const float *a, const float *b, float *c, int n) {
 
   int row = blockIdx.y * TILE + ty;
   int col = blockIdx.x * TILE + tx;
-
 
   float sum = 0.0f;
   int numTiles = (n + TILE - 1) / TILE;
@@ -99,28 +146,47 @@ __global__ void matmulTiled(const float *a, const float *b, float *c, int n) {
 }
 
 double gpuMM(const float *d_a, const float *d_b, float *d_c, int n,
-                       int tileSize, int iterations) {
+             int tileSize, int iterations) {
   dim3 block(tileSize, tileSize);
   dim3 grid((n + tileSize - 1) / tileSize, (n + tileSize - 1) / tileSize);
 
+  // NVTX Push/Pop for warmup
   {
     NvtxScopedRange warmupRange("kernel_naive_warmup", kColorKernelWarmup);
     for (int i = 0; i < 3; ++i) {
+      // NVTX Marker for each warmup iteration
+      char markerName[64];
+      snprintf(markerName, sizeof(markerName), "naive_warmup_iter_%d", i);
+      nvtxMarker(markerName, kColorMarker);
+      
       NvtxScopedRange launchRange("matmul_naive_launch", kColorKernelNaive);
       matmulNaive<<<grid, block>>>(d_a, d_b, d_c, n);
     }
   }
   CHECK_CUDA(cudaGetLastError());
   CHECK_CUDA(cudaDeviceSynchronize());
+  
+  nvtxMarker("Naive Warmup Complete", kColorMarker);
 
   cudaEvent_t start, stop;
   CHECK_CUDA(cudaEventCreate(&start));
   CHECK_CUDA(cudaEventCreate(&stop));
 
+  // NVTX Range for timing section
+  NvtxRange timingRange;
+  timingRange.start("Naive_Timing_Section", kColorRange);
+
   CHECK_CUDA(cudaEventRecord(start));
   {
     NvtxScopedRange timedRange("kernel_naive_timed", kColorKernelTimed);
     for (int i = 0; i < iterations; ++i) {
+      // NVTX Marker every 10 iterations
+      if (i % 10 == 0) {
+        char markerName[64];
+        snprintf(markerName, sizeof(markerName), "naive_timed_iter_%d", i);
+        nvtxMarker(markerName, kColorMarker);
+      }
+      
       NvtxScopedRange launchRange("matmul_naive_launch", kColorKernelNaive);
       matmulNaive<<<grid, block>>>(d_a, d_b, d_c, n);
     }
@@ -128,6 +194,8 @@ double gpuMM(const float *d_a, const float *d_b, float *d_c, int n,
   CHECK_CUDA(cudaEventRecord(stop));
   CHECK_CUDA(cudaGetLastError());
   CHECK_CUDA(cudaEventSynchronize(stop));
+  
+  timingRange.end();
 
   float elapsedMs = elapsed(start, stop);
   CHECK_CUDA(cudaEventDestroy(start));
@@ -137,12 +205,16 @@ double gpuMM(const float *d_a, const float *d_b, float *d_c, int n,
 }
 
 double gpuMM_shared(const float *d_a, const float *d_b, float *d_c, int n,
-                       int tileSize, int iterations) {
+                    int tileSize, int iterations) {
   dim3 block(tileSize, tileSize);
   dim3 grid((n + tileSize - 1) / tileSize, (n + tileSize - 1) / tileSize);
+  
+  // NVTX Push/Pop for warmup
   {
     NvtxScopedRange warmupRange("kernel_tiled_warmup", kColorKernelWarmup);
     for (int i = 0; i < 1; ++i) {
+      nvtxMarker("Tiled Warmup Start", kColorMarker);
+      
       NvtxScopedRange launchRange("matmul_tiled_launch", kColorKernelTiled);
       if (tileSize == 8) {
         matmulTiled<8><<<grid, block>>>(d_a, d_b, d_c, n);
@@ -155,15 +227,28 @@ double gpuMM_shared(const float *d_a, const float *d_b, float *d_c, int n,
   }
   CHECK_CUDA(cudaGetLastError());
   CHECK_CUDA(cudaDeviceSynchronize());
+  
+  nvtxMarker("Tiled Warmup Complete", kColorMarker);
 
   cudaEvent_t start, stop;
   CHECK_CUDA(cudaEventCreate(&start));
   CHECK_CUDA(cudaEventCreate(&stop));
 
+  // NVTX Range for timing section
+  NvtxRange timingRange;
+  timingRange.start("Tiled_Timing_Section", kColorRange);
+
   CHECK_CUDA(cudaEventRecord(start));
   {
     NvtxScopedRange timedRange("kernel_tiled_timed", kColorKernelTimed);
     for (int i = 0; i < iterations; ++i) {
+      // NVTX Marker every 10 iterations
+      if (i % 10 == 0) {
+        char markerName[64];
+        snprintf(markerName, sizeof(markerName), "tiled_timed_iter_%d", i);
+        nvtxMarker(markerName, kColorMarker);
+      }
+      
       NvtxScopedRange launchRange("matmul_tiled_launch", kColorKernelTiled);
       if (tileSize == 8) {
         matmulTiled<8><<<grid, block>>>(d_a, d_b, d_c, n);
@@ -177,6 +262,8 @@ double gpuMM_shared(const float *d_a, const float *d_b, float *d_c, int n,
   CHECK_CUDA(cudaEventRecord(stop));
   CHECK_CUDA(cudaGetLastError());
   CHECK_CUDA(cudaEventSynchronize(stop));
+  
+  timingRange.end();
 
   float elapsedMs = elapsed(start, stop);
   CHECK_CUDA(cudaEventDestroy(start));
@@ -187,6 +274,9 @@ double gpuMM_shared(const float *d_a, const float *d_b, float *d_c, int n,
 
 void matmulCpu(const std::vector<float> &a, const std::vector<float> &b,
                std::vector<float> &c, int n) {
+  // NVTX Push/Pop for CPU computation
+  NvtxScopedRange cpuCompute("CPU_Matrix_Multiply", kColorCPU);
+  
   for (int row = 0; row < n; ++row) {
     int rowBase = row * n;
     for (int col = 0; col < n; ++col) {
@@ -199,33 +289,58 @@ void matmulCpu(const std::vector<float> &a, const std::vector<float> &b,
   }
 }
 
-
 double gpuMM_cublas(const float *d_a, const float *d_b, float *d_c, int n,
                     int iterations) {
+  // NVTX Push/Pop for cuBLAS handle creation
   cublasHandle_t handle;
-  CUBLAS_CHECK(cublasCreate(&handle));
+  {
+    NvtxScopedRange handleCreate("cuBLAS_Handle_Create", kColorCublas);
+    CUBLAS_CHECK(cublasCreate(&handle));
+  }
+  
+  nvtxMarker("cuBLAS Handle Created", kColorMarker);
 
   const float alpha = 1.0f;
   const float beta = 0.0f;
 
+  // NVTX Push/Pop for warmup
   {
     NvtxScopedRange warmupRange("cublas_warmup", kColorCublasWarmup);
     for (int i = 0; i < 3; ++i) {
+      // NVTX Marker for each warmup iteration
+      char markerName[64];
+      snprintf(markerName, sizeof(markerName), "cublas_warmup_iter_%d", i);
+      nvtxMarker(markerName, kColorMarker);
+      
       NvtxScopedRange sgemmRange("cublas_sgemm", kColorCublas);
       CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, &alpha,
                                d_b, n, d_a, n, &beta, d_c, n));
     }
   }
   CHECK_CUDA(cudaDeviceSynchronize());
+  
+  nvtxMarker("cuBLAS Warmup Complete", kColorMarker);
 
   cudaEvent_t start, stop;
   CHECK_CUDA(cudaEventCreate(&start));
   CHECK_CUDA(cudaEventCreate(&stop));
+  
+  // NVTX Range for timing section
+  NvtxRange timingRange;
+  timingRange.start("cuBLAS_Timing_Section", kColorRange);
+  
   CHECK_CUDA(cudaEventRecord(start));
 
   {
     NvtxScopedRange timedRange("cublas_timed", kColorCublasTimed);
     for (int i = 0; i < iterations; ++i) {
+      // NVTX Marker every 10 iterations
+      if (i % 10 == 0) {
+        char markerName[64];
+        snprintf(markerName, sizeof(markerName), "cublas_timed_iter_%d", i);
+        nvtxMarker(markerName, kColorMarker);
+      }
+      
       NvtxScopedRange sgemmRange("cublas_sgemm", kColorCublas);
       CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, &alpha,
                                d_b, n, d_a, n, &beta, d_c, n));
@@ -234,26 +349,43 @@ double gpuMM_cublas(const float *d_a, const float *d_b, float *d_c, int n,
 
   CHECK_CUDA(cudaEventRecord(stop));
   CHECK_CUDA(cudaEventSynchronize(stop));
+  
+  timingRange.end();
 
   float elapsedMs = elapsed(start, stop);
 
   CHECK_CUDA(cudaEventDestroy(start));
   CHECK_CUDA(cudaEventDestroy(stop));
-  CUBLAS_CHECK(cublasDestroy(handle));
+  
+  {
+    NvtxScopedRange handleDestroy("cuBLAS_Handle_Destroy", kColorCublas);
+    CUBLAS_CHECK(cublasDestroy(handle));
+  }
 
   return static_cast<double>(elapsedMs) / static_cast<double>(iterations);
 }
 
-
 double benchmarkCpu(const std::vector<float> &a, const std::vector<float> &b,
                     std::vector<float> &c, int n, int iterations) {
-  matmulCpu(a, b, c, n);
+  // NVTX Push/Pop for initial CPU run
+  {
+    NvtxScopedRange initialRun("CPU_Initial_Run", kColorCPU);
+    matmulCpu(a, b, c, n);
+  }
+  
+  nvtxMarker("CPU Initial Run Complete", kColorMarker);
+
+  // NVTX Range for CPU timing
+  NvtxRange cpuTimingRange;
+  cpuTimingRange.start("CPU_Timing_Section", kColorRange);
 
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < 1; ++i) {
     matmulCpu(a, b, c, n);
   }
   auto stop = std::chrono::high_resolution_clock::now();
+  
+  cpuTimingRange.end();
 
   double elapsedMs = std::chrono::duration<double, std::milli>(stop - start).count();
   return elapsedMs / static_cast<double>(iterations);
@@ -264,8 +396,10 @@ double gflopsFromMs(int n, double avgMs) {
   return (2.0 * static_cast<double>(n) * n * n) / (seconds * 1e9);
 }
 
-
 bool validateOutput(const std::vector<float> &out, float expected) {
+  // NVTX Push/Pop for validation
+  NvtxScopedRange validationRange("Output_Validation", kColorRange);
+  
   for (size_t i = 0; i < out.size(); ++i) {
     if (std::fabs(out[i] - expected) > 1e-2f) {
       std::cerr << "Validation failed at index " << i
@@ -278,6 +412,12 @@ bool validateOutput(const std::vector<float> &out, float expected) {
 }
 
 int main(int argc, char **argv) {
+  // NVTX Marker for program start
+  nvtxMarker("Program Start", kColorMarker);
+  
+  // NVTX Push/Pop for initialization
+  NvtxScopedRange initRange("Program_Initialization", kColorRange);
+  
   int n = 1024;
   int iterations = 50;
 
@@ -301,19 +441,37 @@ int main(int argc, char **argv) {
   std::vector<float> h_c_naive(elements, 0.0f);
   std::vector<float> h_c_tiled(elements, 0.0f);
   std::vector<float> h_c_cublas(elements, 0.0f);
+  
+  // End initialization
+  initRange.~NvtxScopedRange();
+  nvtxMarker("Initialization Complete", kColorMarker);
 
-double cpuMs = benchmarkCpu(h_a, h_b, h_c_cpu, n, iterations);
+  // NVTX Range for CPU benchmark
+  NvtxRange cpuBenchmarkRange;
+  cpuBenchmarkRange.start("CPU_Benchmark", kColorRange);
+  
+  double cpuMs = benchmarkCpu(h_a, h_b, h_c_cpu, n, iterations);
   if (!validateOutput(h_c_cpu, 2.0f * static_cast<float>(n))) {
     return EXIT_FAILURE;
   }
   double cpuGflops = gflopsFromMs(n, cpuMs);
+  
+  cpuBenchmarkRange.end();
+  nvtxMarker("CPU Benchmark Complete", kColorMarker);
 
+  // NVTX Push/Pop for GPU memory allocation
   float *d_a = nullptr;
   float *d_b = nullptr;
   float *d_c = nullptr;
-  CHECK_CUDA(cudaMalloc(&d_a, bytes));
-  CHECK_CUDA(cudaMalloc(&d_b, bytes));
-  CHECK_CUDA(cudaMalloc(&d_c, bytes));
+  
+  {
+    NvtxScopedRange allocRange("GPU_Memory_Allocation", kColorMemcpyH2D);
+    CHECK_CUDA(cudaMalloc(&d_a, bytes));
+    CHECK_CUDA(cudaMalloc(&d_b, bytes));
+    CHECK_CUDA(cudaMalloc(&d_c, bytes));
+  }
+  
+  nvtxMarker("GPU Memory Allocated", kColorMarker);
 
   {
     NvtxScopedRange range("memcpy_h2d_a", kColorMemcpyH2D);
@@ -323,32 +481,39 @@ double cpuMs = benchmarkCpu(h_a, h_b, h_c_cpu, n, iterations);
     NvtxScopedRange range("memcpy_h2d_b", kColorMemcpyH2D);
     CHECK_CUDA(cudaMemcpy(d_b, h_b.data(), bytes, cudaMemcpyHostToDevice));
   }
+  
+  nvtxMarker("Host to Device Transfer Complete", kColorMarker);
 
   int device = 0;
   cudaDeviceProp prop{};
   CHECK_CUDA(cudaGetDevice(&device));
   CHECK_CUDA(cudaGetDeviceProperties(&prop, device));
+  
   std::cout << "Device: " << prop.name << "\n";
   std::cout << "Matrix size: " << n << "x" << n
             << ", iterations: " << iterations << "\n\n";
 
-std::cout << "CPU Execution: " << std::fixed << std::setprecision(3) 
-          << cpuMs << " ms\n\n";
-std::cout << std::string(150, '-') << "\n";
-std::cout << "\t\t\t\t\t\tGPU Execution\n";
-std::cout << std::string(150, '-') << "\n";
-std::cout << std::left 
-          << std::setw(12) << "TileSize"
-          << std::setw(18) << "Naive Time(ms)"
-          << std::setw(18) << "Shared Time(ms)"
-          << std::setw(18) << "Cublas Time(ms)"
-          << std::setw(12) << "Naive/CPU"
-          << std::setw(18) << "Shared/CPU"
-          << std::setw(18) << "Shared/Naive"
-          << std::setw(18) << "Cublas/Naive"
-          << std::setw(12) << "Cublas/Shared"
-          << "\n";
-std::cout << std::string(150, '-') << "\n";
+  std::cout << "CPU Execution: " << std::fixed << std::setprecision(3) 
+            << cpuMs << " ms\n\n";
+  std::cout << std::string(150, '-') << "\n";
+  std::cout << "\t\t\t\t\t\tGPU Execution\n";
+  std::cout << std::string(150, '-') << "\n";
+  std::cout << std::left 
+            << std::setw(12) << "TileSize"
+            << std::setw(18) << "Naive Time(ms)"
+            << std::setw(18) << "Shared Time(ms)"
+            << std::setw(18) << "Cublas Time(ms)"
+            << std::setw(12) << "Naive/CPU"
+            << std::setw(18) << "Shared/CPU"
+            << std::setw(18) << "Shared/Naive"
+            << std::setw(18) << "Cublas/Naive"
+            << std::setw(12) << "Cublas/Shared"
+            << "\n";
+  std::cout << std::string(150, '-') << "\n";
+
+  // NVTX Range for all GPU benchmarks
+  NvtxRange gpuBenchmarkRange;
+  gpuBenchmarkRange.start("All_GPU_Benchmarks", kColorRange);
 
   const int tileSizes[] = {8, 16, 32};
   for (int tileSize : tileSizes) {
@@ -356,81 +521,134 @@ std::cout << std::string(150, '-') << "\n";
       continue;
     }
 
+    // NVTX Marker for each tile size
+    char markerName[64];
+    snprintf(markerName, sizeof(markerName), "Benchmarking TileSize=%d", tileSize);
+    nvtxMarker(markerName, kColorMarker);
+    
+    // NVTX Push/Pop for individual tile benchmark
+    NvtxScopedRange tileBenchmark("Tile_Size_Benchmark", kColorKernelWarmup);
+
     double executiontime = gpuMM(d_a, d_b, d_c, n, tileSize, iterations);
+    
+    nvtxMarker("Naive Kernel Complete for Tile", kColorMarker);
+    
     double executiontime_shared = gpuMM_shared(d_a, d_b, d_c, n, tileSize, iterations);
+    
+    nvtxMarker("Tiled Kernel Complete for Tile", kColorMarker);
+    
     double cublasMs = gpuMM_cublas(d_a, d_b, d_c, n, iterations);
+    
+    nvtxMarker("cuBLAS Complete for Tile", kColorMarker);
+    
     double speedupNaiveVsCpu = cpuMs / executiontime;
     double speedupSharedVsCpu = cpuMs / executiontime_shared;
-    double speeduptiledvsnaive = executiontime/ executiontime_shared;
+    double speeduptiledvsnaive = executiontime / executiontime_shared;
     double speedupcublasvstiled = executiontime_shared / cublasMs;
     double speedupcublasvsnaive = executiontime / cublasMs;
     double seconds = executiontime / 1e3;
     double seconds_shared = executiontime_shared / 1e3;
-    double gflops= gflopsFromMs(n,executiontime);
-    double gflops_shared= gflopsFromMs(n,executiontime_shared);
+    double gflops = gflopsFromMs(n, executiontime);
+    double gflops_shared = gflopsFromMs(n, executiontime_shared);
+    
     std::cout << std::left
-          << std::setw(12) << tileSize
-          << std::fixed << std::setprecision(3)
-          << std::setw(18) << executiontime
-          << std::fixed << std::setprecision(3)
-          << std::setw(18) << executiontime_shared
-        << std::fixed << std::setprecision(3)
-          << std::setw(18) << cublasMs
-          << std::setw(12) << speedupNaiveVsCpu
-          << std::setw(18) << speedupSharedVsCpu
-          << std::setw(18) << speeduptiledvsnaive
-         << std::setw(18) << speedupcublasvsnaive
-          << std::setw(12) << speedupcublasvstiled
-          << "\n";
-
+              << std::setw(12) << tileSize
+              << std::fixed << std::setprecision(3)
+              << std::setw(18) << executiontime
+              << std::fixed << std::setprecision(3)
+              << std::setw(18) << executiontime_shared
+              << std::fixed << std::setprecision(3)
+              << std::setw(18) << cublasMs
+              << std::setw(12) << speedupNaiveVsCpu
+              << std::setw(18) << speedupSharedVsCpu
+              << std::setw(18) << speeduptiledvsnaive
+              << std::setw(18) << speedupcublasvsnaive
+              << std::setw(12) << speedupcublasvstiled
+              << "\n";
   }
+  
+  gpuBenchmarkRange.end();
+  nvtxMarker("All GPU Benchmarks Complete", kColorMarker);
 
+  // NVTX Push/Pop for validation section
   {
-    NvtxScopedRange range("memcpy_d2h_c", kColorMemcpyD2H);
-    CHECK_CUDA(cudaMemcpy(h_c_naive.data(), d_c, bytes, cudaMemcpyDeviceToHost));
-  }
-
-  if (!validateOutput(h_c_naive, 2.0f * static_cast<float>(n))) {
-    CHECK_CUDA(cudaFree(d_a));
-    CHECK_CUDA(cudaFree(d_b));
-    CHECK_CUDA(cudaFree(d_c));
-    return EXIT_FAILURE;
-  }
-
+    NvtxScopedRange validationSection("Validation_Section", kColorMemcpyD2H);
+    
+    // Copy naive results
     {
-    NvtxScopedRange range("memcpy_d2h_c", kColorMemcpyD2H);
-    CHECK_CUDA(cudaMemcpy(h_c_tiled.data(), d_c, bytes, cudaMemcpyDeviceToHost));
+      NvtxScopedRange range("memcpy_d2h_naive", kColorMemcpyD2H);
+      CHECK_CUDA(cudaMemcpy(h_c_naive.data(), d_c, bytes, cudaMemcpyDeviceToHost));
+    }
+    nvtxMarker("Naive Results Copied", kColorMarker);
+
+    if (!validateOutput(h_c_naive, 2.0f * static_cast<float>(n))) {
+      CHECK_CUDA(cudaFree(d_a));
+      CHECK_CUDA(cudaFree(d_b));
+      CHECK_CUDA(cudaFree(d_c));
+      return EXIT_FAILURE;
+    }
+    nvtxMarker("Naive Validation Passed", kColorMarker);
+
+    // Copy tiled results
+    {
+      NvtxScopedRange range("memcpy_d2h_tiled", kColorMemcpyD2H);
+      CHECK_CUDA(cudaMemcpy(h_c_tiled.data(), d_c, bytes, cudaMemcpyDeviceToHost));
+    }
+    nvtxMarker("Tiled Results Copied", kColorMarker);
+
+    if (!validateOutput(h_c_tiled, 2.0f * static_cast<float>(n))) {
+      CHECK_CUDA(cudaFree(d_a));
+      CHECK_CUDA(cudaFree(d_b));
+      CHECK_CUDA(cudaFree(d_c));
+      return EXIT_FAILURE;
+    }
+    nvtxMarker("Tiled Validation Passed", kColorMarker);
+
+    // Copy cuBLAS results
+    {
+      NvtxScopedRange range("memcpy_d2h_cublas", kColorMemcpyD2H);
+      CHECK_CUDA(cudaMemcpy(h_c_cublas.data(), d_c, bytes, cudaMemcpyDeviceToHost));
+    }
+    nvtxMarker("cuBLAS Results Copied", kColorMarker);
+
+    if (!validateOutput(h_c_cublas, 2.0f * static_cast<float>(n))) {
+      CHECK_CUDA(cudaFree(d_a));
+      CHECK_CUDA(cudaFree(d_b));
+      CHECK_CUDA(cudaFree(d_c));
+      return EXIT_FAILURE;
+    }
+    nvtxMarker("cuBLAS Validation Passed", kColorMarker);
+
+    // Cross-validate implementations
+    {
+      NvtxScopedRange crossValidation("Cross_Validation", kColorRange);
+      
+      float maxDiffNaiveTiled = 0.0f;
+      float maxDiffNaiveCublas = 0.0f;
+      for (size_t i = 0; i < elements; ++i) {
+        maxDiffNaiveTiled =
+            std::max(maxDiffNaiveTiled, std::fabs(h_c_naive[i] - h_c_tiled[i]));
+        maxDiffNaiveCublas =
+            std::max(maxDiffNaiveCublas, std::fabs(h_c_naive[i] - h_c_cublas[i]));
+      }
+      
+      std::cout << "\nCross-validation max differences:\n";
+      std::cout << "  Naive vs Tiled:  " << maxDiffNaiveTiled << "\n";
+      std::cout << "  Naive vs cuBLAS: " << maxDiffNaiveCublas << "\n";
+    }
+    nvtxMarker("Cross-Validation Complete", kColorMarker);
   }
 
-if (!validateOutput(h_c_tiled, 2.0f * static_cast<float>(n))) {
-    CHECK_CUDA(cudaFree(d_a));
-    CHECK_CUDA(cudaFree(d_b));
-    CHECK_CUDA(cudaFree(d_c));
-    return EXIT_FAILURE;
-  }
-
+  // NVTX Push/Pop for cleanup
   {
-    NvtxScopedRange range("memcpy_d2h_c", kColorMemcpyD2H);
-    CHECK_CUDA(cudaMemcpy(h_c_cublas.data(), d_c, bytes, cudaMemcpyDeviceToHost));
-  }
-
-  if (!validateOutput(h_c_cublas, 2.0f * static_cast<float>(n))) {
+    NvtxScopedRange cleanupRange("GPU_Memory_Cleanup", kColorMemcpyD2H);
     CHECK_CUDA(cudaFree(d_a));
     CHECK_CUDA(cudaFree(d_b));
     CHECK_CUDA(cudaFree(d_c));
-    return EXIT_FAILURE;
   }
-
-  float maxDiffNaiveTiled = 0.0f;
-  float maxDiffNaiveCublas = 0.0f;
-  for (size_t i = 0; i < elements; ++i) {
-    maxDiffNaiveTiled =
-        std::max(maxDiffNaiveTiled, std::fabs(h_c_naive[i] - h_c_tiled[i]));
-    maxDiffNaiveCublas =
-        std::max(maxDiffNaiveCublas, std::fabs(h_c_naive[i] - h_c_cublas[i]));
-  }
-  CHECK_CUDA(cudaFree(d_a));
-  CHECK_CUDA(cudaFree(d_b));
-  CHECK_CUDA(cudaFree(d_c));
+  
+  nvtxMarker("Cleanup Complete", kColorMarker);
+  nvtxMarker("Program End", kColorMarker);
+  
   return EXIT_SUCCESS;
 }
