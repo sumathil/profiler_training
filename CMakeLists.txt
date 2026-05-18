@@ -12,8 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # CMake options for CUDA architecture and lineinfo
-option(CUDA_ARCH_SM70 "Enable sm_70 architecture" ON)
-option(CUDA_ARCH_SM80 "Enable sm_80 architecture" OFF)
+option(CUDA_ARCH_SM70 "Enable sm_70 architecture" OFF)
+option(CUDA_ARCH_SM80 "Enable sm_80 architecture" ON)
 option(ENABLE_LINEINFO "Enable CUDA lineinfo for profiling" OFF)
 
 # Build CUDA architecture list based on options
@@ -27,8 +27,8 @@ endif()
 
 # If no architecture is selected, default to sm_70
 if(NOT CUDA_ARCH_LIST)
-  set(CUDA_ARCH_LIST 70)
-  message(WARNING "No CUDA architecture selected, defaulting to sm_70")
+  set(CUDA_ARCH_LIST 80)
+  message(WARNING "No CUDA architecture selected, defaulting to sm_80")
 endif()
 
 # Apply CUDA architecture settings
@@ -53,8 +53,8 @@ set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-g -O2 -DNDEBUG")
 
 # Add lineinfo for CUDA if enabled (useful for profiling in Release/RelWithDebInfo)
 if(ENABLE_LINEINFO)
-  set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} --generate-line-info")
-  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO} --generate-line-info")
+  set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} --generate-line-info -Xptxas -v")
+  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO} --generate-line-info -Xptxas -v")
   message(STATUS "CUDA line info enabled for Release and RelWithDebInfo builds")
 endif()
 
@@ -67,7 +67,13 @@ add_executable(matmul_cpu_naive examples/cuda/matrix_cpu_naive.cu)
 add_executable(matmul_cpu_ns examples/cuda/matrix_cpu_naive_shared.cu)
 add_executable(matmul_cpu_nsc examples/cuda/matrix_cpu_naive_shared_cublas.cu)
 
+enable_language(CUDA)
+find_package(CUDAToolkit REQUIRED)
+# Add include directories
+include_directories(${CUDA_INCLUDE_DIRS})
+
+# Link directories
+link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
+
 # Link libraries
-target_link_libraries(matmul_cpu_naive PRIVATE nvToolsExt)
-target_link_libraries(matmul_cpu_ns PRIVATE nvToolsExt)
-target_link_libraries(matmul_cpu_nsc PRIVATE nvToolsExt cublas)
+target_link_libraries(matmul_cpu_nsc PRIVATE CUDA::cublas)

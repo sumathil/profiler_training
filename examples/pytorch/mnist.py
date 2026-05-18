@@ -76,9 +76,9 @@ with nvtx_range("Data Loading", color=Colors.DATA):
         transforms.Normalize((0.5,), (0.5,))
     ])
 
-    train_dataset = torchvision.datasets.MNIST(root="./data", train=True, 
-                                               transform=transform, download=True)
-    test_dataset = torchvision.datasets.MNIST(root="./data", train=False, 
+    train_dataset = torchvision.datasets.MNIST(root="/lustre/scratch5/sumathil/profiler_training_materials/ai_codes/mnist_ex/data", train=True, 
+                                               transform=transform, download=False)
+    test_dataset = torchvision.datasets.MNIST(root="/lustre/scratch5/sumathil/profiler_training_materials/ai_codes/mnist_ex/data", train=False, 
                                               transform=transform)
 
     train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)

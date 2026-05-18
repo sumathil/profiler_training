@@ -1,7 +1,7 @@
 # Profiler Training Materials
 
 Training materials to demonstrate the use of nsight profilers using CUDA and AI examples.
-The CUDA examples are matrix multiplication and 2D stencil operation. The AI examples contains CNN image classification for mnist and CIFAR-10 datasets.
+The CUDA examples are matrix multiplication and 2D stencil operation. The AI examples contains CNN image classification for mnist dataset.
 
 ## Requirements
 
@@ -16,7 +16,6 @@ Create a virtual environment and install Python packages:
 python3.11 -m venv .venv
 source .venv/bin/activate
 python3.11 -m pip install --upgrade pip
-python3.11 -m pip install -r requirements.txt
 ```
 
 Install CUDA-enabled PyTorch/TorchVision wheels (NVIDIA GPU setup):
@@ -34,12 +33,12 @@ cmake --build build -j
 
 ## Run
 
-### Matrix multiply
+### Matrix multiply (naive)
 
 Default run:
 
 ```bash
-./build/matmul_benchmark
+./build/matmul_cpu_naive
 ```
 
 Custom matrix size and iterations:
@@ -53,24 +52,44 @@ Arguments:
 - `iterations` (default: `50`)
 
 
-### Matrix multiply (shared memory)
+### Matrix multiply (naive vs shared memory)
 
 Default run:
 
 ```bash
-./build/matmul_tiled_benchmark
+./build/matmul_cpu_ns
 ```
 
 Custom matrix size and iterations:
 
 ```bash
-./build/matmul_tiled_benchmark 1024 50
+./build/matmul_cpu_ns 1024 50
 ```
 
 Output format:
 
 ```text
-TileSize,AvgKernelMs,EstimatedGFLOPS
+Tilesize Execution Time Speedup
+```
+
+### Matrix multiply (cublas vs shared and naive)
+
+Default run:
+
+```bash
+./build/matmul_cpu_nsc
+```
+
+Custom matrix size and iterations:
+
+```bash
+./build/matmul_cpu_nsc 1024 50
+```
+
+Output format:
+
+```text
+Tilesize Execution Time Speedup
 ```
 
 
@@ -124,6 +143,35 @@ Output format:
 TileDim,AvgKernelMs,EstimatedGBps
 ```
 
+### Profiling using NSIGHT tools
+
+#### Nsight systems
+
+Creates nsys reports that gives system level analysis report
+
+```
+nsys profile -o naive ./build/matmul_cpu_naive 1024 10
+```
+
+To trace cublas library, pass `-t cublas` to the `nsys` CLI
+ 
+```
+nsys profile -t cuda,nvtx,osrt,cublas -o naive_shared_cublas ./build/matmul_cpu_nsc 1024 10
+```
+
+#### Nsight compute
+
+Provide kernel level details to analyze memory throughput, warp occupancy, roofline 
+
+```
+ncu --import-source on --set full --call-stack --nvtx -o ncu_naive  ./build/matmul_cpu_naive 1024 5
+```
+
+### Profiling Python applications
+
+```
+nsys profile -t cuda,nvtx,osrt,cudnn,cublas -o mnist python3.11 examples/pytorch/mnist.py
+```
 
 
 
