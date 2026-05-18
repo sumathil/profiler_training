@@ -22,6 +22,7 @@ constexpr uint32_t kColorKernelWarmup = 0xFF8E24AA;   // Purple
 constexpr uint32_t kColorKernelTimed = 0xFFFB8C00;    // Orange
 constexpr uint32_t kColorMarker = 0xFFFF00FF;         // Magenta
 constexpr uint32_t kColorRange = 0xFF00FFFF;          // Cyan
+constexpr uint32_t kColorCPU = 0xFFFFFFFF;            // White
 
 // NVTX Push/Pop RAII wrapper
 class NvtxScopedRange {
@@ -279,13 +280,25 @@ void matmulCpu(const std::vector<float> &a, const std::vector<float> &b,
 
 double benchmarkCpu(const std::vector<float> &a, const std::vector<float> &b,
                     std::vector<float> &c, int n, int iterations) {
-  matmulCpu(a, b, c, n);
+  // NVTX Push/Pop for initial CPU run
+  {
+    NvtxScopedRange initialRun("CPU_Initial_Run", kColorCPU);
+    matmulCpu(a, b, c, n);
+  }
+  
+  nvtxMarker("CPU Initial Run Complete", kColorMarker);
+
+  // NVTX Range for CPU timing
+  NvtxRange cpuTimingRange;
+  cpuTimingRange.start("CPU_Timing_Section", kColorRange);
 
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < 1; ++i) {
     matmulCpu(a, b, c, n);
   }
   auto stop = std::chrono::high_resolution_clock::now();
+  
+  cpuTimingRange.end();
 
   double elapsedMs = std::chrono::duration<double, std::milli>(stop - start).count();
   return elapsedMs / static_cast<double>(iterations);
@@ -297,6 +310,9 @@ double gflopsFromMs(int n, double avgMs) {
 }
 
 bool validateOutput(const std::vector<float> &out, float expected) {
+  // NVTX Push/Pop for validation
+  NvtxScopedRange validationRange("Output_Validation", kColorRange);
+  
   for (size_t i = 0; i < out.size(); ++i) {
     if (std::fabs(out[i] - expected) > 1e-2f) {
       std::cerr << "Validation failed at index " << i
