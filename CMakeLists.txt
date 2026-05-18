@@ -53,8 +53,8 @@ set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-g -O2 -DNDEBUG")
 
 # Add lineinfo for CUDA if enabled (useful for profiling in Release/RelWithDebInfo)
 if(ENABLE_LINEINFO)
-  set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} --generate-line-info")
-  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO} --generate-line-info")
+  set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} --generate-line-info -Xptxas -v")
+  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO} --generate-line-info -Xptxas -v")
   message(STATUS "CUDA line info enabled for Release and RelWithDebInfo builds")
 endif()
 
@@ -76,6 +76,4 @@ include_directories(${CUDA_INCLUDE_DIRS})
 link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
 
 # Link libraries
-#target_link_libraries(matmul_cpu_naive PRIVATE CUDA::nvToolsExt)
-#target_link_libraries(matmul_cpu_ns PRIVATE CUDA::nvToolsExt)
 target_link_libraries(matmul_cpu_nsc PRIVATE CUDA::cublas)
