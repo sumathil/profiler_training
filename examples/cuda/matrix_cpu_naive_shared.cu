@@ -328,6 +328,7 @@ int main(int argc, char **argv) {
   // NVTX Marker for program start
   nvtxMarker("Program Start", kColorMarker);
   
+  NvtxScopedRange initRange("Program_Initialization", kColorRange);
   int n = 1024;
   int iterations = 50;
 
@@ -351,6 +352,10 @@ int main(int argc, char **argv) {
   std::vector<float> h_c_cpu(elements, 0.0f);
   std::vector<float> h_c_naive(elements, 0.0f);
   std::vector<float> h_c_tiled(elements, 0.0f);
+  
+    // End initialization
+  initRange.~NvtxScopedRange();
+  nvtxMarker("Initialization Complete", kColorMarker);
 
   // NVTX Range for CPU benchmark
   NvtxRange cpuRange;
@@ -376,7 +381,7 @@ int main(int argc, char **argv) {
     CHECK_CUDA(cudaMalloc(&d_b, bytes));
     CHECK_CUDA(cudaMalloc(&d_c, bytes));
   }
-
+  nvtxMarker("GPU Memory Allocated", kColorMarker);
   {
     NvtxScopedRange range("memcpy_h2d_a", kColorMemcpyH2D);
     CHECK_CUDA(cudaMemcpy(d_a, h_a.data(), bytes, cudaMemcpyHostToDevice));
@@ -386,7 +391,7 @@ int main(int argc, char **argv) {
     CHECK_CUDA(cudaMemcpy(d_b, h_b.data(), bytes, cudaMemcpyHostToDevice));
   }
 
-  nvtxMarker("Memory Transfer Complete", kColorMarker);
+  nvtxMarker("Memory Transfer Host to Device Complete", kColorMarker);
 
   int device = 0;
   cudaDeviceProp prop{};
@@ -470,6 +475,8 @@ int main(int argc, char **argv) {
     NvtxScopedRange range("memcpy_d2h_c_tiled", kColorMemcpyD2H);
     CHECK_CUDA(cudaMemcpy(h_c_tiled.data(), d_c, bytes, cudaMemcpyDeviceToHost));
   }
+  
+  nvtxMarker("Device to Host Transfer Complete", kColorMarker);
 
   if (!validateOutput(h_c_tiled, 2.0f * static_cast<float>(n))) {
     CHECK_CUDA(cudaFree(d_a));
