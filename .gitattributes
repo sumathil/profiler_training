@@ -1,0 +1,9 @@
+# Exclude CMake files from language detection
+CMakeLists.txt linguist-vendored
+*.cmake linguist-vendored
+
+# Mark your actual source code (adjust extensions as needed)
+*.cpp linguist-detectable
+*.cu linguist-detectable
+*.h linguist-detectable
+*.py linguist-detectable
