@@ -1,0 +1,8 @@
+# Core dependencies for PyTorch examples in this repo.
+torch
+torchvision
+
+# Useful for viewing profiler traces in TensorBoard.
+tensorboard
+torch-tb-profiler
+nvtx
