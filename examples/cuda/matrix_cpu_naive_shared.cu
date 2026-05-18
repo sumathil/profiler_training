@@ -266,6 +266,8 @@ double gpuMM_shared(const float *d_a, const float *d_b, float *d_c, int n,
 
 void matmulCpu(const std::vector<float> &a, const std::vector<float> &b,
                std::vector<float> &c, int n) {
+                
+  NvtxScopedRange cpuCompute("CPU_Matrix_Multiply", kColorCPU);
   for (int row = 0; row < n; ++row) {
     int rowBase = row * n;
     for (int col = 0; col < n; ++col) {
