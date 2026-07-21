@@ -15,6 +15,7 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 option(CUDA_ARCH_SM70 "Enable sm_70 architecture" ON)
 option(CUDA_ARCH_SM80 "Enable sm_80 architecture" OFF)
 option(ENABLE_LINEINFO "Enable CUDA lineinfo for profiling" OFF)
+option(ENABLE_KOKKOS "Enable Kokkos examples" OFF)
 
 # Build CUDA architecture list based on options
 set(CUDA_ARCH_LIST "")
@@ -33,6 +34,9 @@ endif()
 
 # Apply CUDA architecture settings
 set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH_LIST} CACHE STRING "CUDA architectures" FORCE)
+
+# Find CUDA toolkit for libraries like cuBLAS
+find_package(CUDAToolkit REQUIRED)
 
 # Convert list to readable format for display
 list(JOIN CUDA_ARCH_LIST ", sm_" CUDA_ARCH_DISPLAY)
@@ -68,6 +72,20 @@ add_executable(matmul_cpu_ns examples/cuda/matrix_cpu_naive_shared.cu)
 add_executable(matmul_cpu_nsc examples/cuda/matrix_cpu_naive_shared_cublas.cu)
 
 # Link libraries
-target_link_libraries(matmul_cpu_naive PRIVATE nvToolsExt)
-target_link_libraries(matmul_cpu_ns PRIVATE nvToolsExt)
-target_link_libraries(matmul_cpu_nsc PRIVATE nvToolsExt cublas)
+#target_link_libraries(matmul_cpu_naive PRIVATE nvToolsExt)
+#target_link_libraries(matmul_cpu_ns PRIVATE nvToolsExt)
+#target_link_libraries(matmul_cpu_nsc PRIVATE nvToolsExt cublas)
+target_link_libraries(matmul_cpu_nsc PRIVATE CUDA::cublas)
+
+# Kokkos examples (optional)
+if(ENABLE_KOKKOS)
+  # Use Kokkos_DIR if provided, otherwise search in default locations
+  if(DEFINED Kokkos_DIR)
+    message(STATUS "Using Kokkos installation at: ${Kokkos_DIR}")
+  endif()
+  find_package(Kokkos REQUIRED)
+  message(STATUS "Kokkos found, building Kokkos examples")
+
+  add_executable(matmul_kokkos examples/cuda/matrix_kokkos.cpp)
+  target_link_libraries(matmul_kokkos PRIVATE Kokkos::kokkos)
+endif()

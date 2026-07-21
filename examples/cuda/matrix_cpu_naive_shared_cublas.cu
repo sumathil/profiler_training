@@ -1,5 +1,5 @@
 #include <cuda_runtime.h>
-#include <nvToolsExt.h>
+#include <nvtx3/nvToolsExt.h>
 #include <cublas_v2.h>
 
 #include "utils.h"
