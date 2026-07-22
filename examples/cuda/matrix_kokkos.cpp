@@ -160,12 +160,15 @@ struct MatMulTiled {
       team.team_barrier();
 
       // Compute partial sum for this thread
-      Kokkos::parallel_reduce(Kokkos::ThreadVectorRange(team, TILE_SIZE),
-                             [&](const int k, float &lsum) {
+      // Each thread computes one element of the output tile
+      Kokkos::single(Kokkos::PerThread(team), [&]() {
         const int local_row = team.team_rank() / TILE_SIZE;
         const int local_col = team.team_rank() % TILE_SIZE;
-        lsum += tileA(local_row, k) * tileB(k, local_col);
-      }, sum);
+
+        for (int k = 0; k < TILE_SIZE; ++k) {
+          sum += tileA(local_row, k) * tileB(k, local_col);
+        }
+      });
 
       team.team_barrier();
     }
@@ -520,7 +523,10 @@ int main(int argc, char **argv) {
     nvtxMarker("All Kokkos Benchmarks Complete", kColorMarker);
 
     std::cout << std::string(90, '-') << "\n";
-  }
+
+    // Explicitly destroy Kokkos views before finalize
+    // This prevents deallocation errors after Kokkos::finalize()
+  }  // End of Kokkos scope - all views are destroyed here
 
   nvtxMarker("Program End", kColorMarker);
   Kokkos::finalize();

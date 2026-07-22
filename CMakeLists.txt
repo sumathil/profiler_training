@@ -79,10 +79,23 @@ target_link_libraries(matmul_cpu_nsc PRIVATE CUDA::cublas)
 
 # Kokkos examples (optional)
 if(ENABLE_KOKKOS)
-  # Use Kokkos_DIR if provided, otherwise search in default locations
-  if(DEFINED Kokkos_DIR)
-    message(STATUS "Using Kokkos installation at: ${Kokkos_DIR}")
+  # If KOKKOS_INSTALL_DIR is provided (installation root), construct the CMake config path
+  if(DEFINED KOKKOS_INSTALL_DIR)
+    message(STATUS "Using Kokkos installation root: ${KOKKOS_INSTALL_DIR}")
+    # Try common locations for the CMake config file
+    if(EXISTS "${KOKKOS_INSTALL_DIR}/lib64/cmake/Kokkos/KokkosConfig.cmake")
+      set(Kokkos_DIR "${KOKKOS_INSTALL_DIR}/lib64/cmake/Kokkos")
+    elseif(EXISTS "${KOKKOS_INSTALL_DIR}/lib/cmake/Kokkos/KokkosConfig.cmake")
+      set(Kokkos_DIR "${KOKKOS_INSTALL_DIR}/lib/cmake/Kokkos")
+    else()
+      message(FATAL_ERROR "Could not find KokkosConfig.cmake in ${KOKKOS_INSTALL_DIR}/lib64/cmake/Kokkos or ${KOKKOS_INSTALL_DIR}/lib/cmake/Kokkos")
+    endif()
+    message(STATUS "Found Kokkos CMake config at: ${Kokkos_DIR}")
+  elseif(DEFINED Kokkos_DIR)
+    # Kokkos_DIR was provided directly (backwards compatibility)
+    message(STATUS "Using Kokkos CMake config at: ${Kokkos_DIR}")
   endif()
+
   find_package(Kokkos REQUIRED)
   message(STATUS "Kokkos found, building Kokkos examples")
 
