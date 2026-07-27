@@ -12,8 +12,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # CMake options for CUDA architecture and lineinfo
-option(CUDA_ARCH_SM70 "Enable sm_70 architecture" ON)
-option(CUDA_ARCH_SM80 "Enable sm_80 architecture" OFF)
+option(CUDA_ARCH_SM70 "Enable sm_70 architecture (V100)" ON)
+option(CUDA_ARCH_SM80 "Enable sm_80 architecture (A100)" OFF)
+option(CUDA_ARCH_SM90 "Enable sm_90 architecture (H100)" OFF)
 option(ENABLE_LINEINFO "Enable CUDA lineinfo for profiling" OFF)
 option(ENABLE_KOKKOS "Enable Kokkos examples" OFF)
 
@@ -24,6 +25,9 @@ if(CUDA_ARCH_SM70)
 endif()
 if(CUDA_ARCH_SM80)
   list(APPEND CUDA_ARCH_LIST 80)
+endif()
+if(CUDA_ARCH_SM90)
+  list(APPEND CUDA_ARCH_LIST 90)
 endif()
 
 # If no architecture is selected, default to sm_70

@@ -108,8 +108,86 @@ struct MatMulNaive {
   }
 };
 
+template<int TILE>
+struct MatMulTiled {
+  using view_type = Kokkos::View<float**, Kokkos::LayoutLeft>;
+  view_type a, b, c;
+  int n;
+
+  using policy_type = Kokkos::TeamPolicy<>;
+  using member_type = typename policy_type::member_type;
+
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const member_type& team) const {
+    const int tilesPerDim = (n + TILE - 1) / TILE;
+    const int tileRow = team.league_rank() / tilesPerDim;
+    const int tileCol = team.league_rank() % tilesPerDim;
+
+    const int row0 = tileRow * TILE;
+    const int col0 = tileCol * TILE;
+
+    /* --------------------------------------------------------------
+       1️⃣ Scratch slots – one for A‑tile, one for B‑tile
+       -------------------------------------------------------------- */
+    Kokkos::View<float[TILE][TILE],
+                 Kokkos::DefaultExecutionSpace::scratch_memory_space,
+                 Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+        tileA(team.team_scratch(0));
+    Kokkos::View<float[TILE][TILE],
+                 Kokkos::DefaultExecutionSpace::scratch_memory_space,
+                 Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+        tileB(team.team_scratch(1));
+
+    /* --------------------------------------------------------------
+       2️⃣ Thread‑to‑tile mapping
+       -------------------------------------------------------------- */
+    const int thread_id = team.team_rank();          // 0 … team_size‑1
+    const int tx = thread_id % TILE;                // column inside tile
+    const int ty = thread_id / TILE;                // row    inside tile
+
+    /* --------------------------------------------------------------
+       3️⃣ Compute one output element per thread (if inside matrix)
+       -------------------------------------------------------------- */
+    float sum = 0.0f;
+    const int numTiles = tilesPerDim;
+
+    for (int t = 0; t < numTiles; ++t) {
+      /* ---- load A‑tile ------------------------------------------- */
+      if (ty < TILE && tx < TILE) {
+        const int aRow = row0 + ty;
+        const int aCol = t * TILE + tx;
+        tileA(ty, tx) = (aRow < n && aCol < n) ? a(aRow, aCol) : 0.0f;
+      }
+
+      /* ---- load B‑tile ------------------------------------------- */
+      if (ty < TILE && tx < TILE) {
+        const int bRow = t * TILE + ty;
+        const int bCol = col0 + tx;
+        tileB(ty, tx) = (bRow < n && bCol < n) ? b(bRow, bCol) : 0.0f;
+      }
+
+      team.team_barrier();          // make sure the whole tile is visible
+
+      /* ---- compute partial sum ----------------------------------- */
+      if (row0 + ty < n && col0 + tx < n) {
+        for (int k = 0; k < TILE; ++k) {
+          sum += tileA(ty, k) * tileB(k, tx);
+        }
+      }
+
+      team.team_barrier();          // next tile can start loading
+    }
+
+    /* ---- write result ------------------------------------------- */
+    if (row0 + ty < n && col0 + tx < n) {
+      c(row0 + ty, col0 + tx) = sum;
+    }
+  }
+};
+
+
 // Tiled matrix multiplication using Kokkos TeamPolicy
-template <int TILE_SIZE>
+/*template <int TILE_SIZE>
 struct MatMulTiled {
   ViewMatrixType a;
   ViewMatrixType b;
@@ -182,7 +260,7 @@ struct MatMulTiled {
       });
     }
   }
-};
+};*/
 
 // Benchmark naive Kokkos kernel
 double benchmarkKokkosNaive(ViewMatrixType d_a, ViewMatrixType d_b,
@@ -246,6 +324,7 @@ double benchmarkKokkosTiled(ViewMatrixType d_a, ViewMatrixType d_b,
   using policy_type = Kokkos::TeamPolicy<>;
   policy_type policy(num_teams, team_size);
   policy = policy.set_scratch_size(1, Kokkos::PerTeam(scratch_size));
+  policy = policy.set_scratch_size(0, Kokkos::PerTeam(scratch_size));
 
   // Warmup
   for (int i = 0; i < 1; ++i) {
@@ -274,6 +353,7 @@ double benchmarkKokkosTiled(ViewMatrixType d_a, ViewMatrixType d_b,
       }
 
       NvtxScopedRange launchRange("kokkos_tiled_launch", kColorKernelTiled);
+
       Kokkos::parallel_for("MatMulTiled", policy,
                           MatMulTiled<TILE_SIZE>(d_a, d_b, d_c, n));
     }
