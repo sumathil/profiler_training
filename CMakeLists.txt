@@ -63,7 +63,9 @@ set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-g -O2 -DNDEBUG")
 if(ENABLE_LINEINFO)
   set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} --generate-line-info")
   set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO} --generate-line-info")
-  message(STATUS "CUDA line info enabled for Release and RelWithDebInfo builds")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -lineinfo")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -lineinfo")
+  message(STATUS "CUDA/CXX line info enabled for Release and RelWithDebInfo builds")
 endif()
 
 # Define all executables
