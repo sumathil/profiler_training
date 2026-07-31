@@ -32,8 +32,8 @@ endif()
 
 # If no architecture is selected, default to sm_70
 if(NOT CUDA_ARCH_LIST)
-  set(CUDA_ARCH_LIST 70)
-  message(WARNING "No CUDA architecture selected, defaulting to sm_70")
+  set(CUDA_ARCH_LIST 80)
+  message(WARNING "No CUDA architecture selected, defaulting to sm_80")
 endif()
 
 # Apply CUDA architecture settings
@@ -76,6 +76,14 @@ add_executable(stencil_2d_compare examples/cuda/stencil_2d_tiled_optimized.cu)
 add_executable(matmul_cpu_naive examples/cuda/matrix_cpu_naive.cu)
 add_executable(matmul_cpu_ns examples/cuda/matrix_cpu_naive_shared.cu)
 add_executable(matmul_cpu_nsc examples/cuda/matrix_cpu_naive_shared_cublas.cu)
+
+enable_language(CUDA)
+find_package(CUDAToolkit REQUIRED)
+# Add include directories
+include_directories(${CUDA_INCLUDE_DIRS})
+
+# Link directories
+link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
 
 # Link libraries
 #target_link_libraries(matmul_cpu_naive PRIVATE nvToolsExt)

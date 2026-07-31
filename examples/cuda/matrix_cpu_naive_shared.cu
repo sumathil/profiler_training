@@ -22,6 +22,7 @@ constexpr uint32_t kColorKernelWarmup = 0xFF8E24AA;   // Purple
 constexpr uint32_t kColorKernelTimed = 0xFFFB8C00;    // Orange
 constexpr uint32_t kColorMarker = 0xFFFF00FF;         // Magenta
 constexpr uint32_t kColorRange = 0xFF00FFFF;          // Cyan
+constexpr uint32_t kColorCPU = 0xFFFFFFFF;            // White
 
 // NVTX Push/Pop RAII wrapper
 class NvtxScopedRange {
@@ -265,6 +266,8 @@ double gpuMM_shared(const float *d_a, const float *d_b, float *d_c, int n,
 
 void matmulCpu(const std::vector<float> &a, const std::vector<float> &b,
                std::vector<float> &c, int n) {
+                
+  NvtxScopedRange cpuCompute("CPU_Matrix_Multiply", kColorCPU);
   for (int row = 0; row < n; ++row) {
     int rowBase = row * n;
     for (int col = 0; col < n; ++col) {
@@ -279,13 +282,25 @@ void matmulCpu(const std::vector<float> &a, const std::vector<float> &b,
 
 double benchmarkCpu(const std::vector<float> &a, const std::vector<float> &b,
                     std::vector<float> &c, int n, int iterations) {
-  matmulCpu(a, b, c, n);
+  // NVTX Push/Pop for initial CPU run
+  {
+    NvtxScopedRange initialRun("CPU_Initial_Run", kColorCPU);
+    matmulCpu(a, b, c, n);
+  }
+  
+  nvtxMarker("CPU Initial Run Complete", kColorMarker);
+
+  // NVTX Range for CPU timing
+  NvtxRange cpuTimingRange;
+  cpuTimingRange.start("CPU_Timing_Section", kColorRange);
 
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < 1; ++i) {
     matmulCpu(a, b, c, n);
   }
   auto stop = std::chrono::high_resolution_clock::now();
+  
+  cpuTimingRange.end();
 
   double elapsedMs = std::chrono::duration<double, std::milli>(stop - start).count();
   return elapsedMs / static_cast<double>(iterations);
@@ -297,6 +312,9 @@ double gflopsFromMs(int n, double avgMs) {
 }
 
 bool validateOutput(const std::vector<float> &out, float expected) {
+  // NVTX Push/Pop for validation
+  NvtxScopedRange validationRange("Output_Validation", kColorRange);
+  
   for (size_t i = 0; i < out.size(); ++i) {
     if (std::fabs(out[i] - expected) > 1e-2f) {
       std::cerr << "Validation failed at index " << i
@@ -312,6 +330,7 @@ int main(int argc, char **argv) {
   // NVTX Marker for program start
   nvtxMarker("Program Start", kColorMarker);
   
+  NvtxScopedRange initRange("Program_Initialization", kColorRange);
   int n = 1024;
   int iterations = 50;
 
@@ -335,6 +354,10 @@ int main(int argc, char **argv) {
   std::vector<float> h_c_cpu(elements, 0.0f);
   std::vector<float> h_c_naive(elements, 0.0f);
   std::vector<float> h_c_tiled(elements, 0.0f);
+  
+    // End initialization
+  initRange.~NvtxScopedRange();
+  nvtxMarker("Initialization Complete", kColorMarker);
 
   // NVTX Range for CPU benchmark
   NvtxRange cpuRange;
@@ -360,7 +383,7 @@ int main(int argc, char **argv) {
     CHECK_CUDA(cudaMalloc(&d_b, bytes));
     CHECK_CUDA(cudaMalloc(&d_c, bytes));
   }
-
+  nvtxMarker("GPU Memory Allocated", kColorMarker);
   {
     NvtxScopedRange range("memcpy_h2d_a", kColorMemcpyH2D);
     CHECK_CUDA(cudaMemcpy(d_a, h_a.data(), bytes, cudaMemcpyHostToDevice));
@@ -370,7 +393,7 @@ int main(int argc, char **argv) {
     CHECK_CUDA(cudaMemcpy(d_b, h_b.data(), bytes, cudaMemcpyHostToDevice));
   }
 
-  nvtxMarker("Memory Transfer Complete", kColorMarker);
+  nvtxMarker("Memory Transfer Host to Device Complete", kColorMarker);
 
   int device = 0;
   cudaDeviceProp prop{};
@@ -454,6 +477,8 @@ int main(int argc, char **argv) {
     NvtxScopedRange range("memcpy_d2h_c_tiled", kColorMemcpyD2H);
     CHECK_CUDA(cudaMemcpy(h_c_tiled.data(), d_c, bytes, cudaMemcpyDeviceToHost));
   }
+  
+  nvtxMarker("Device to Host Transfer Complete", kColorMarker);
 
   if (!validateOutput(h_c_tiled, 2.0f * static_cast<float>(n))) {
     CHECK_CUDA(cudaFree(d_a));

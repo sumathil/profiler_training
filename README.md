@@ -211,6 +211,35 @@ Profile Kokkos with kernel filter:
 ncu --set full --import-source on -k "regex:MatMulNaive" --kernel-name-base demangled -o kokkos_ncu ./matmul_kokkos
 ```
 
+### Profiling using NSIGHT tools
+
+#### Nsight systems
+
+Creates nsys reports that gives system level analysis report
+
+```
+nsys profile -o naive ./build/matmul_cpu_naive 1024 10
+```
+
+To trace cublas library, pass `-t cublas` to the `nsys` CLI
+ 
+```
+nsys profile -t cuda,nvtx,osrt,cublas -o naive_shared_cublas ./build/matmul_cpu_nsc 1024 10
+```
+
+#### Nsight compute
+
+Provide kernel level details to analyze memory throughput, warp occupancy, roofline 
+
+```
+ncu --import-source on --set full --call-stack --nvtx -o ncu_naive  ./build/matmul_cpu_naive 1024 5
+```
+
+### Profiling Python applications
+
+```
+nsys profile -t cuda,nvtx,osrt,cudnn,cublas -o mnist python3.11 examples/pytorch/mnist.py
+```
 
 
 
