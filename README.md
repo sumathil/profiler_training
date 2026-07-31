@@ -10,6 +10,12 @@ The CUDA examples include matrix multiplication (naive, shared memory, cuBLAS), 
 - CMake 3.18+
 - Python 3.10+ (for PyTorch examples)
 
+## Clone the Kokkos repo
+
+```bash
+git clone -b kokkos git@github.com:sumathil/profiler_training.git
+```
+
 Create a virtual environment and install Python packages:
 
 ```bash
@@ -23,6 +29,7 @@ Install CUDA-enabled PyTorch/TorchVision wheels (NVIDIA GPU setup):
 ```bash
 python3.11 -m pip install -r requirements.txt
 ```
+
 
 ## Build
 
