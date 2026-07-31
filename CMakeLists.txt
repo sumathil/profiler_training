@@ -12,9 +12,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # CMake options for CUDA architecture and lineinfo
-option(CUDA_ARCH_SM70 "Enable sm_70 architecture" OFF)
-option(CUDA_ARCH_SM80 "Enable sm_80 architecture" ON)
+option(CUDA_ARCH_SM70 "Enable sm_70 architecture (V100)" ON)
+option(CUDA_ARCH_SM80 "Enable sm_80 architecture (A100)" OFF)
+option(CUDA_ARCH_SM90 "Enable sm_90 architecture (H100)" OFF)
 option(ENABLE_LINEINFO "Enable CUDA lineinfo for profiling" OFF)
+option(ENABLE_KOKKOS "Enable Kokkos examples" OFF)
 
 # Build CUDA architecture list based on options
 set(CUDA_ARCH_LIST "")
@@ -23,6 +25,9 @@ if(CUDA_ARCH_SM70)
 endif()
 if(CUDA_ARCH_SM80)
   list(APPEND CUDA_ARCH_LIST 80)
+endif()
+if(CUDA_ARCH_SM90)
+  list(APPEND CUDA_ARCH_LIST 90)
 endif()
 
 # If no architecture is selected, default to sm_70
@@ -33,6 +38,9 @@ endif()
 
 # Apply CUDA architecture settings
 set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH_LIST} CACHE STRING "CUDA architectures" FORCE)
+
+# Find CUDA toolkit for libraries like cuBLAS
+find_package(CUDAToolkit REQUIRED)
 
 # Convert list to readable format for display
 list(JOIN CUDA_ARCH_LIST ", sm_" CUDA_ARCH_DISPLAY)
@@ -53,9 +61,11 @@ set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-g -O2 -DNDEBUG")
 
 # Add lineinfo for CUDA if enabled (useful for profiling in Release/RelWithDebInfo)
 if(ENABLE_LINEINFO)
-  set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} --generate-line-info -Xptxas -v")
-  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO} --generate-line-info -Xptxas -v")
-  message(STATUS "CUDA line info enabled for Release and RelWithDebInfo builds")
+  set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} --generate-line-info")
+  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO} --generate-line-info")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -lineinfo")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -lineinfo")
+  message(STATUS "CUDA/CXX line info enabled for Release and RelWithDebInfo builds")
 endif()
 
 # Define all executables
@@ -76,4 +86,33 @@ include_directories(${CUDA_INCLUDE_DIRS})
 link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
 
 # Link libraries
+#target_link_libraries(matmul_cpu_naive PRIVATE nvToolsExt)
+#target_link_libraries(matmul_cpu_ns PRIVATE nvToolsExt)
+#target_link_libraries(matmul_cpu_nsc PRIVATE nvToolsExt cublas)
 target_link_libraries(matmul_cpu_nsc PRIVATE CUDA::cublas)
+
+# Kokkos examples (optional)
+if(ENABLE_KOKKOS)
+  # If KOKKOS_INSTALL_DIR is provided (installation root), construct the CMake config path
+  if(DEFINED KOKKOS_INSTALL_DIR)
+    message(STATUS "Using Kokkos installation root: ${KOKKOS_INSTALL_DIR}")
+    # Try common locations for the CMake config file
+    if(EXISTS "${KOKKOS_INSTALL_DIR}/lib64/cmake/Kokkos/KokkosConfig.cmake")
+      set(Kokkos_DIR "${KOKKOS_INSTALL_DIR}/lib64/cmake/Kokkos")
+    elseif(EXISTS "${KOKKOS_INSTALL_DIR}/lib/cmake/Kokkos/KokkosConfig.cmake")
+      set(Kokkos_DIR "${KOKKOS_INSTALL_DIR}/lib/cmake/Kokkos")
+    else()
+      message(FATAL_ERROR "Could not find KokkosConfig.cmake in ${KOKKOS_INSTALL_DIR}/lib64/cmake/Kokkos or ${KOKKOS_INSTALL_DIR}/lib/cmake/Kokkos")
+    endif()
+    message(STATUS "Found Kokkos CMake config at: ${Kokkos_DIR}")
+  elseif(DEFINED Kokkos_DIR)
+    # Kokkos_DIR was provided directly (backwards compatibility)
+    message(STATUS "Using Kokkos CMake config at: ${Kokkos_DIR}")
+  endif()
+
+  find_package(Kokkos REQUIRED)
+  message(STATUS "Kokkos found, building Kokkos examples")
+
+  add_executable(matmul_kokkos examples/cuda/matrix_kokkos.cpp)
+  target_link_libraries(matmul_kokkos PRIVATE Kokkos::kokkos)
+endif()
