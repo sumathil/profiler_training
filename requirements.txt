@@ -1,8 +1,14 @@
-# Core dependencies for PyTorch examples in this repo.
+--extra-index-url https://download.pytorch.org/whl/cu129
+
+# PyTorch stack
 torch
 torchvision
+torchaudio
 
-# Useful for viewing profiler traces in TensorBoard.
-tensorboard
-torch-tb-profiler
-nvtx
+# ML utilities
+pandas==2.2.0
+tensorboard==2.18.0
+torch-tb-profiler==0.4.3
+
+# Profiling
+nvtx==0.2.10
