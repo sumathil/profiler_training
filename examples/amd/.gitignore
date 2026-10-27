@@ -1,0 +1,42 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.hip.cpp
+
+# Profiling outputs
+profiling_results/
+*.csv
+*.json
+*.db
+*.txt.out
+*.proto
+results.*
+workloads/
+
+# Data files
+data/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+
+# Model files
+*.pth
+*.pt
+*.onnx
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

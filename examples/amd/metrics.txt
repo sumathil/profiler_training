@@ -1,0 +1,28 @@
+# rocprof metrics configuration file
+# This file specifies hardware performance counters to collect during profiling
+#
+# Usage: rocprof -i metrics.txt ./your_application
+#
+# Available metrics depend on GPU architecture (RDNA, CDNA)
+# Use 'rocprof --list-basic' to see available basic metrics
+# Use 'rocprof --list-derived' to see available derived metrics
+
+# Basic execution metrics
+pmc : Wavefronts VALUInsts SALUInsts SFetchInsts FlatVMemInsts LDSInsts
+
+# Memory metrics
+pmc : FetchSize WriteSize L2CacheHit MemUnitStalled
+
+# Compute utilization
+pmc : VALUUtilization SALUUtilization FetchSize WriteSize
+
+# Cache metrics
+pmc : L2CacheHit L2CacheMiss
+
+# Additional derived metrics for detailed analysis
+# Uncomment the following lines for more detailed profiling
+# Note: Collecting too many metrics may impact performance
+
+# pmc : ALUStalledByLDS LDSBankConflict
+# pmc : MemUnitBusy WriteUnitStalled
+# pmc : GPUBusy Wavefronts VALUBusy
